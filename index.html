@@ -147,9 +147,10 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 
 <!-- LOG -->
 <div id="scr-log" class="scr">
-  <div class="sg"></div>
+  <div class="day-scroll" id="logDayScroll" style="padding-top:12px"></div>
+  <div class="sg" style="height:6px"></div>
   <div class="card">
-    <div class="ct">Bugün ne yedin?</div>
+    <div class="ct">Yemek ekle</div>
     <div class="row-gap">
       <input type="time" id="logTime" class="inp" style="width:90px;flex-shrink:0">
       <input type="text" id="logFood" class="inp" placeholder="Yemek adı ve miktarı..." style="flex:1">
@@ -210,6 +211,32 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
   <div id="tarifContent"></div>
 </div>
 
+<!-- AI KOÇ -->
+<div id="scr-ai" class="scr">
+  <div class="sg"></div>
+  <div class="card">
+    <div class="ct">Yemek kalori analizi</div>
+    <textarea class="inp" id="aiFood" rows="3" placeholder="Ne yedin? Örn: 200g ızgara tavuk, yarım kase bulgur, yoğurt..." style="margin-bottom:8px;resize:none"></textarea>
+    <button class="btn btn-blue" style="width:100%;margin-bottom:6px" onclick="analyzeFood()">Analiz Et</button>
+    <div class="loading" id="aiLoading" style="display:none;color:var(--text3);font-size:11px;margin-top:4px">Analiz ediliyor...</div>
+    <div class="ai-box" id="aiResult" style="display:none;background:var(--bg3);border-radius:var(--rsm);padding:12px;margin-top:8px;font-size:12px;color:var(--text2);line-height:1.7"></div>
+    <button class="btn btn-green" id="addAiLogBtn" style="width:100%;margin-top:8px;display:none" onclick="addFromAI()">Loga Ekle ✓</button>
+  </div>
+  <div class="card">
+    <div class="ct">Koça sor</div>
+    <textarea class="inp" id="aiQ" rows="3" placeholder="Bir şey sor... Örn: Bugün pilav yesem olur mu?" style="margin-bottom:8px;resize:none"></textarea>
+    <button class="btn btn-blue" style="width:100%;margin-bottom:6px" onclick="askCoach()">Sor</button>
+    <div class="loading" id="coachLoading" style="display:none;color:var(--text3);font-size:11px;margin-top:4px">Düşünüyor...</div>
+    <div class="ai-box" id="coachResult" style="display:none;background:var(--bg3);border-radius:var(--rsm);padding:12px;margin-top:8px;font-size:12px;color:var(--text2);line-height:1.7"></div>
+  </div>
+  <div class="card">
+    <div class="ct">API Key Ayarı</div>
+    <input type="password" class="inp" id="apiKeyIn" placeholder="sk-ant-... API key'ini buraya gir" style="margin-bottom:8px">
+    <button class="btn btn-gray" style="width:100%" onclick="saveKey()">Kaydet</button>
+    <div style="font-size:10px;color:var(--text3);margin-top:6px">API key sadece bu tarayıcıda saklanır. console.anthropic.com'dan alabilirsin.</div>
+  </div>
+</div>
+
 <!-- NAV -->
 <nav class="nav">
   <button class="nb active" onclick="showScr('plan',this)">
@@ -223,6 +250,9 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
   </button>
   <button class="nb" onclick="showScr('tarif',this)">
     <svg viewBox="0 0 24 24"><path d="M3 2h18v20l-9-4-9 4V2z"/></svg>Tarifler
+  </button>
+  <button class="nb" onclick="showScr('ai',this)">
+    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>AI Koç
   </button>
 </nav>
 </div>
@@ -319,7 +349,16 @@ function showScr(id,btn){
   document.querySelectorAll('.nb').forEach(b=>b.classList.remove('active'));
   document.getElementById('scr-'+id).classList.add('active');
   btn.classList.add('active');
+  if(id==='log'){renderLogDayScroll();renderLog();}
 }
+
+function renderLogDayScroll(){
+  const wrap=document.getElementById('logDayScroll');
+  if(!wrap)return;
+  wrap.innerHTML=DAYS.map((d,i)=>`<div class="dp${i===curDay?' active':''}" onclick="selectLogDay(${i})">${d.l}</div>`).join('');
+}
+
+function selectLogDay(i){curDay=i;renderLogDayScroll();renderLog();renderTabs();}
 
 function getTodayKey(){return DAYS[curDay]?.l.replace(' ','').toLowerCase()||'day0'}
 
@@ -360,6 +399,7 @@ function renderDay(){
 
 function renderLog(){
   const k=getTodayKey();
+  document.getElementById('logDayLabel').textContent=DAYS[curDay].l+' logu';
   const dayLogs=logs[k]||[];
   const totals=dayLogs.reduce((a,l)=>({kcal:a.kcal+(l.kcal||0),protein:a.protein+(l.protein||0),karb:a.karb+(l.karb||0),yag:a.yag+(l.yag||0)}),{kcal:0,protein:0,karb:0,yag:0});
   const bars=[{k:'kcal',n:'Kalori',u:'kcal',c:'#60a5fa'},{k:'protein',n:'Protein',u:'g',c:'#4ade80'},{k:'karb',n:'Karbonhidrat',u:'g',c:'#fbbf24'},{k:'yag',n:'Yağ',u:'g',c:'#f472b6'}];
@@ -555,6 +595,80 @@ function addFromAI(){
 function saveKey(){
   const k=document.getElementById('apiKeyIn').value.trim();
   if(k){ls('apikey',k);alert('API key kaydedildi!');}
+}
+
+let lastAiAnalysis=null;
+async function analyzeFood(){
+  const food=document.getElementById('aiFood').value.trim();
+  if(!food)return;
+  const key=ls('apikey');
+  if(!key){alert('Önce API key gir (API Key Ayarı bölümü)');return;}
+  document.getElementById('aiLoading').style.display='block';
+  document.getElementById('aiResult').style.display='none';
+  document.getElementById('addAiLogBtn').style.display='none';
+  try{
+    const res=await fetch('https://api.anthropic.com/v1/messages',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
+      body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:400,messages:[{role:'user',content:`Yemeği analiz et ve SADECE şu JSON formatında yanıt ver, başka hiçbir şey yazma:
+{"kcal":number,"protein":number,"karb":number,"yag":number,"yorum":"max 1 cümle"}
+
+Yemek: ${food}`}]})
+    });
+    const data=await res.json();
+    const text=data.content[0].text.replace(/\`\`\`json|\`\`\`/g,'').trim();
+    lastAiAnalysis=JSON.parse(text);lastAiAnalysis.food=food;
+    document.getElementById('aiResult').innerHTML=`<b>${food}</b><br>🔥 ${lastAiAnalysis.kcal} kcal · 💪 ${lastAiAnalysis.protein}g protein · 🌾 ${lastAiAnalysis.karb}g karb · 🥑 ${lastAiAnalysis.yag}g yağ<br><br><i>${lastAiAnalysis.yorum}</i>`;
+    document.getElementById('aiResult').style.display='block';
+    document.getElementById('addAiLogBtn').style.display='block';
+  }catch(e){
+    document.getElementById('aiResult').innerHTML='Hata: '+e.message;
+    document.getElementById('aiResult').style.display='block';
+  }
+  document.getElementById('aiLoading').style.display='none';
+}
+
+function addFromAI(){
+  if(!lastAiAnalysis)return;
+  const k=getTodayKey();
+  if(!logs[k])logs[k]=[];
+  const now=new Date();
+  logs[k].push({
+    time:`${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`,
+    food:lastAiAnalysis.food,kcal:lastAiAnalysis.kcal,protein:lastAiAnalysis.protein,karb:lastAiAnalysis.karb,yag:lastAiAnalysis.yag
+  });
+  ls('logs',logs);
+  document.getElementById('aiFood').value='';
+  document.getElementById('aiResult').style.display='none';
+  document.getElementById('addAiLogBtn').style.display='none';
+  renderLog();renderTodayStats();
+  alert('Loga eklendi!');
+}
+
+async function askCoach(){
+  const q=document.getElementById('aiQ').value.trim();
+  if(!q)return;
+  const key=ls('apikey');
+  if(!key){alert('Önce API key gir');return;}
+  document.getElementById('coachLoading').style.display='block';
+  document.getElementById('coachResult').style.display='none';
+  try{
+    const res=await fetch('https://api.anthropic.com/v1/messages',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
+      body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:500,messages:[{role:'user',content:`Sen Burak'ın fitness koçusun. Burak 30 yaşında, 92 kg, hedef 80 kg, 4 ayda. Günlük 2200 kcal, 160g protein hedefi var. Haftada 4 gün gym yapıyor. Soruna kısa ve net cevap ver:
+
+${q}`}]})
+    });
+    const data=await res.json();
+    document.getElementById('coachResult').innerHTML=data.content[0].text.replace(/
+/g,'<br>');
+    document.getElementById('coachResult').style.display='block';
+  }catch(e){
+    document.getElementById('coachResult').innerHTML='Hata: '+e.message;
+    document.getElementById('coachResult').style.display='block';
+  }
+  document.getElementById('coachLoading').style.display='none';
 }
 
 init();
